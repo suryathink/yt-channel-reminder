@@ -22,13 +22,14 @@ Get a daily email with one YouTube video you haven't watched yet, from the chann
 |---|---|
 | Frontend (`web/`) | Next.js 16 (App Router), React 19, TypeScript, SCSS (Sass modules + shared tokens/mixins) |
 | Backend (`server/`) | Node.js + Express 5 JSON API, built-in per-minute scheduler |
-| Hosting | Docker Compose + Caddy (automatic HTTPS) on a DigitalOcean droplet |
+| Hosting | Docker Compose behind Nginx + Certbot (HTTPS) on a DigitalOcean droplet |
 | Database | MongoDB Atlas (official `mongodb` driver) |
 | Email | Resend |
 | YouTube | YouTube Data API v3 (API key), Google OAuth for the optional playlist |
 
-The browser only talks to the Next.js app. Next.js proxies `/api/*` to the Express server (`web/next.config.ts`),
-so the session cookie is first-party and there's no CORS to set up.
+Frontend and API are served from the same domain: in production Nginx sends `/api/*` to Express and everything else
+to Next.js (in local dev, Next.js proxies `/api/*` itself via `web/next.config.ts`). So the session cookie is
+first-party and there's no CORS to set up.
 
 ```
 web/      Next.js frontend           server/   Express API + scheduler
@@ -71,48 +72,41 @@ Database tests start a temporary in-memory MongoDB automatically (it downloads `
 or use `MONGODB_TEST_URI=mongodb://...` to point them at a test database. Never point it at production;
 the test database is dropped afterwards.
 
-## Deploying on a DigitalOcean droplet
+## Deploying on a DigitalOcean droplet (Nginx + Certbot)
 
-`docker-compose.yml` runs everything on one droplet:
+The app runs as two Docker containers that listen **only on the droplet itself** (`127.0.0.1`).
+Your existing **Nginx** is the public entry, with a free HTTPS certificate from **Certbot**:
 
-| Container | What it does |
-|---|---|
-| `caddy` | Public entry on ports 80/443, gets and renews HTTPS certificates automatically. Sends `/api/*` to `server`, everything else to `web`. |
-| `web` | Next.js frontend |
-| `server` | Express API + the scheduler that sends the emails |
+```
+internet ──443──► Nginx ──/api/*──► 127.0.0.1:4000  server (Express API + email scheduler)
+                        └──/ ─────► 127.0.0.1:3000  web    (Next.js)
+                                                     data ► MongoDB Atlas
+```
 
-Data lives in **MongoDB Atlas**, so there's nothing to back up on the droplet.
+Data lives in MongoDB Atlas, so there's nothing to back up on the droplet.
 
 ### 1. One-time setup
 
-1. **Droplet**: Ubuntu 24.04. 1 GB RAM works, but add swap so the Next.js build doesn't run out of memory:
+1. **Docker** (if not installed): `curl -fsSL https://get.docker.com | sh`
+2. **Swap** on a 1 GB droplet, so the Next.js build doesn't run out of memory:
    ```bash
-   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-   echo '/swapfile none swap sw 0 0' >> /etc/fstab
+   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
    ```
-2. **Docker**:
-   ```bash
-   curl -fsSL https://get.docker.com | sh
-   ```
-3. **Domain**: add a DNS **A record** (e.g. `reminder.yourdomain.com`) pointing at the droplet's IP.
-4. **Firewall**: allow SSH, 80 and 443 only.
-   ```bash
-   ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
-   ```
-5. **MongoDB Atlas → Network Access**: add the droplet's IP address.
-6. **Google Cloud** (only if you use "Connect YouTube"): authorized redirect URI
+3. **Certbot**: `sudo apt install certbot python3-certbot-nginx`
+4. **DNS**: add an **A record** (e.g. `reminder.yourdomain.com`) pointing at the droplet's IP.
+5. **MongoDB Atlas → Network Access**: add the droplet's IP.
+6. **Google Cloud** (only for "Connect YouTube"): authorized redirect URI
    `https://reminder.yourdomain.com/api/auth/google/callback`.
 
-### 2. Configure and start
+### 2. Start the app
 
 ```bash
-git clone https://github.com/suryathink/yt-channel-reminder.git
+git clone -b main https://github.com/suryathink/yt-channel-reminder.git
 cd yt-channel-reminder
-
-cp .env.example .env                 # DOMAIN=reminder.yourdomain.com
-cp server/.env.example server/.env   # see below
+cp .env.example .env                 # only if 3000/4000 are already used on the droplet
+cp server/.env.example server/.env
 nano server/.env
-
 docker compose up -d --build
 ```
 
@@ -127,21 +121,35 @@ EMAIL_FROM=YT Reminder <reminders@yourdomain.com>
 YOUTUBE_API_KEY=...
 ```
 
-Leave `DISABLE_SCHEDULER=0`: the server is always on, so the built-in scheduler sends the emails, with no cron needed.
+Leave `DISABLE_SCHEDULER=0`: the server is always on, so it sends the emails itself, with no cron needed.
 
-Open `https://reminder.yourdomain.com`, sign in, and add a channel. To check right away, use
-**"Send me today's email now"** on the dashboard.
+Check it's up: `curl http://127.0.0.1:4000/api/health` should print `{"ok":true}`.
 
-### 3. Day to day
+### 3. Nginx site + HTTPS
 
 ```bash
-docker compose logs -f server          # emails sent, sync errors, etc.
-docker compose ps                      # status
-git pull && docker compose up -d --build   # deploy an update
+sudo cp deploy/nginx/yt-reminder.conf /etc/nginx/sites-available/yt-reminder
+sudo sed -i 's/reminder.example.com/reminder.yourdomain.com/' /etc/nginx/sites-available/yt-reminder
+sudo ln -s /etc/nginx/sites-available/yt-reminder /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+sudo certbot --nginx -d reminder.yourdomain.com
 ```
 
-No domain yet? Leave `DOMAIN` empty in `.env` and the site is served over plain HTTP on the droplet's IP.
-Set `WEB_URL=http://<droplet-ip>` to match. Use a domain with HTTPS for real use.
+Certbot gets the certificate, adds HTTPS and the HTTP→HTTPS redirect to that site, and renews it automatically.
+Check the renewal with `sudo certbot renew --dry-run`.
+
+If you changed `WEB_PORT` / `API_PORT` in `.env`, change the two `proxy_pass` ports in the Nginx file to match.
+
+Open `https://reminder.yourdomain.com`, sign in, add a channel, and use **"Send me today's email now"** to check emails.
+
+### 4. Day to day
+
+```bash
+docker compose logs -f server              # emails sent, sync errors, etc.
+docker compose ps                          # status
+git pull && docker compose up -d --build   # deploy an update
+```
 
 ### Other hosts
 
