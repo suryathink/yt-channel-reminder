@@ -2,10 +2,10 @@
   "name": "yt-channel-reminder",
   "private": true,
   "scripts": {
-    "install:all": "npm --prefix server install && npm --prefix web install",
+    "install:all": "npm --prefix server install && npm --prefix client install",
     "dev:server": "npm --prefix server run dev",
-    "dev:web": "npm --prefix web run dev",
+    "dev:client": "npm --prefix client run dev",
     "test": "npm --prefix server test",
-    "build:web": "npm --prefix web run build"
+    "build:client": "npm --prefix client run build"
   }
 }

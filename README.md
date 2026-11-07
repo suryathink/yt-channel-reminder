@@ -20,19 +20,19 @@ Get a daily email with one YouTube video you haven't watched yet, from the chann
 
 | Part | Tech |
 |---|---|
-| Frontend (`web/`) | Next.js 16 (App Router), React 19, TypeScript, SCSS (Sass modules + shared tokens/mixins) |
+| Frontend (`client/`) | Next.js 16 (App Router), React 19, TypeScript, SCSS (Sass modules + shared tokens/mixins) |
 | Backend (`server/`) | Node.js + Express 5 JSON API, built-in per-minute scheduler |
-| Hosting | Docker Compose behind Nginx + Certbot (HTTPS) on a DigitalOcean droplet |
+| Hosting | Docker Compose behind Nginx + Certbot (HTTPS) on a DigitalOcean droplet, deployed by GitHub Actions via Docker Hub |
 | Database | MongoDB Atlas (official `mongodb` driver) |
 | Email | Resend |
 | YouTube | YouTube Data API v3 (API key), Google OAuth for the optional playlist |
 
 Frontend and API are served from the same domain: in production Nginx sends `/api/*` to Express and everything else
-to Next.js (in local dev, Next.js proxies `/api/*` itself via `web/next.config.ts`). So the session cookie is
+to Next.js (in local dev, Next.js proxies `/api/*` itself via `client/next.config.ts`). So the session cookie is
 first-party and there's no CORS to set up.
 
 ```
-web/      Next.js frontend           server/   Express API + scheduler
+client/   Next.js frontend           server/   Express API + scheduler
   app/          pages                  src/server.js        API routes (/api/...)
   components/   UI + *.module.scss     src/reminders.js     emails + scheduler
   styles/       _variables, _mixins    src/picker.js        random unwatched video
@@ -58,9 +58,9 @@ Indexes are created automatically on startup.
 ```bash
 npm run install:all
 cp server/.env.example server/.env   # fill in MONGODB_URI, APP_SECRET, RESEND_API_KEY, YOUTUBE_API_KEY…
-cp web/.env.example web/.env.local   # BACKEND_URL=http://localhost:4000
+cp client/.env.example client/.env.local   # BACKEND_URL=http://localhost:4000
 npm run dev:server                   # API on :4000
-npm run dev:web                      # site on http://localhost:3000
+npm run dev:client                   # site on http://localhost:3000
 ```
 Without `RESEND_API_KEY`, emails (including sign-in links) are printed in the server terminal.
 
@@ -72,14 +72,53 @@ Database tests start a temporary in-memory MongoDB automatically (it downloads `
 or use `MONGODB_TEST_URI=mongodb://...` to point them at a test database. Never point it at production;
 the test database is dropped afterwards.
 
-## Deploying on a DigitalOcean droplet (Nginx + Certbot)
+## Automatic deploys (GitHub Actions)
+
+`.github/workflows/deploy.yml` runs on every push to `main`:
+
+1. **test**: server tests (with a temporary MongoDB), client typecheck and build
+2. **build**: builds both Docker images on GitHub and pushes them to Docker Hub
+   (`<DOCKER_USERNAME>/yt-reminder-server` and `-client`, tagged with the commit)
+3. **deploy**: SSHes into the droplet, copies the compose file and deploy scripts, writes `server/.env` from the
+   secrets, pulls the new images and restarts. On the first deploy it also creates the Nginx site and gets the HTTPS
+   certificate with Certbot (`deploy/remote-deploy.sh`).
+
+Nothing is built or pushed until every required value below exists. You can also run it by hand from the
+**Actions** tab ("Run workflow").
+
+**Settings → Secrets and variables → Actions**
+
+| Name | Type | Required | Where to get it |
+|---|---|---|---|
+| `DROPLET_HOST` | Secret | ✅ | Droplet's IP (DigitalOcean → Droplets) |
+| `DROPLET_USER` | Secret | ✅ | SSH user, usually `root` |
+| `DROPLET_SSH_KEY` | Secret | ✅ | Private key whose public key is in the droplet's `~/.ssh/authorized_keys` |
+| `DROPLET_KNOWN_HOSTS` | Secret | recommended | Output of `ssh-keyscan <droplet-ip>`, run from your own computer |
+| `DROPLET_SSH_PORT` | Secret | – | Only if SSH isn't on port 22 |
+| `DOCKER_USERNAME` | Secret | ✅ | Docker Hub username |
+| `DOCKER_PASSWORD` | Secret | ✅ | Docker Hub → Account settings → Personal access tokens (Read & Write) |
+| `MONGODB_URI` | Secret | ✅ | Atlas → your cluster → Connect → Drivers |
+| `RESEND_API_KEY` | Secret | ✅ | resend.com → API Keys |
+| `YOUTUBE_API_KEY` | Secret | ✅ | Google Cloud console → enable *YouTube Data API v3* → Credentials → API key |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Secret | – | Only for "Connect YouTube" (OAuth client, Web application) |
+| `CRON_SECRET` | Secret | – | Only if you use `/api/cron` |
+| `CERTBOT_EMAIL` | **Variable** | ✅ | Your email, for certificate-expiry notices |
+| `DOMAIN` | Variable | – | Defaults to `ytreminder.suryathink.com` |
+| `EMAIL_FROM` | Variable | – | Defaults to `YT Reminder <reminders@suryathink.com>` (domain must be verified in Resend) |
+
+`APP_SECRET` is generated on the droplet on the first deploy and kept, so it isn't a secret you need to add.
+
+Before the first deploy: point the `ytreminder` DNS A record at the droplet, and add the droplet's IP in
+Atlas → Network Access. The workflow installs Docker, Nginx and Certbot on the droplet if they're missing.
+
+## Deploying by hand on a DigitalOcean droplet (Nginx + Certbot)
 
 The app runs as two Docker containers that listen **only on the droplet itself** (`127.0.0.1`).
 Your existing **Nginx** is the public entry, with a free HTTPS certificate from **Certbot**:
 
 ```
 internet ──443──► Nginx ──/api/*──► 127.0.0.1:4000  server (Express API + email scheduler)
-                        └──/ ─────► 127.0.0.1:3000  web    (Next.js)
+                        └──/ ─────► 127.0.0.1:3000  client (Next.js)
                                                      data ► MongoDB Atlas
 ```
 
@@ -139,7 +178,7 @@ sudo certbot --nginx -d reminder.yourdomain.com
 Certbot gets the certificate, adds HTTPS and the HTTP→HTTPS redirect to that site, and renews it automatically.
 Check the renewal with `sudo certbot renew --dry-run`.
 
-If you changed `WEB_PORT` / `API_PORT` in `.env`, change the two `proxy_pass` ports in the Nginx file to match.
+If you changed `CLIENT_PORT` / `API_PORT` in `.env`, change the two `proxy_pass` ports in the Nginx file to match.
 
 Open `https://reminder.yourdomain.com`, sign in, add a channel, and use **"Send me today's email now"** to check emails.
 

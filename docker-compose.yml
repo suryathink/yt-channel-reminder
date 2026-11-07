@@ -8,6 +8,8 @@
 
 services:
   server:
+    # CI deploys pass the Docker Hub image; a manual `docker compose up --build` builds it locally.
+    image: ${SERVER_IMAGE:-yt-reminder-server:local}
     build: ./server
     env_file: ./server/.env
     environment:
@@ -17,15 +19,16 @@ services:
       - "127.0.0.1:${API_PORT:-4000}:4000"
     restart: unless-stopped
 
-  web:
+  client:
+    image: ${CLIENT_IMAGE:-yt-reminder-client:local}
     build:
-      context: ./web
+      context: ./client
       args:
         # Container-to-container address. Only used if a request reaches Next.js at /api;
         # normally Nginx sends /api straight to the server.
         BACKEND_URL: http://server:4000
     ports:
-      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${CLIENT_PORT:-3000}:3000"
     restart: unless-stopped
     depends_on:
       - server
