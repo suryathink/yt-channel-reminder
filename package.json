@@ -1,0 +1,16 @@
+{
+  "name": "yt-channel-reminder",
+  "version": "1.0.0",
+  "description": "Daily email reminders with a random unwatched video from the YouTube channels you want to learn from.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning --env-file-if-exists=.env src/index.js",
+    "dev": "node --no-warnings=ExperimentalWarning --env-file-if-exists=.env --watch src/index.js",
+    "test": "node --no-warnings=ExperimentalWarning --test test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
