@@ -1,0 +1,29 @@
+@use '../styles/variables' as *;
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $space-3;
+  padding: $space-3 $space-4;
+  border-radius: $radius;
+  margin-bottom: $space-4;
+  background: var(--success-soft);
+  color: var(--success);
+  font-weight: 500;
+}
+
+.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.close {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 $space-1;
+}

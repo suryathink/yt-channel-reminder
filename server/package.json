@@ -1,0 +1,21 @@
+{
+  "name": "yt-reminder-server",
+  "version": "2.0.0",
+  "private": true,
+  "description": "API + scheduler for YT Reminder: daily emails with a random unwatched YouTube video.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --env-file-if-exists=.env --watch src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "mongodb": "^7.0.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server-core": "^11.0.0"
+  }
+}

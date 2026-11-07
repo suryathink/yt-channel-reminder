@@ -1,87 +1,85 @@
 # YT Reminder 📺
 
-A small web app that helps you actually watch the YouTube channels you keep meaning to learn from
+Get a daily email with one YouTube video you haven't watched yet, from the channels you want to learn from
 (for example [Hussein Nasser](https://www.youtube.com/@hnasr) for backend engineering).
 
-- Sign in with just your email (passwordless link).
-- Add one or more YouTube channels by pasting a link (`https://www.youtube.com/@hnasr`, `@hnasr`, `/channel/UC…`).
-- Every day the app picks **one random video you haven't watched** from each channel and emails it to you.
-  - Default times are **10:00** (today's video) and **20:00** (reminder for the same video). You can change both the times and your time zone, with up to 6 emails a day.
-  - If you mark the video as watched before the evening email, the evening email suggests a new one.
-  - Videos that have never been suggested are picked first, and Shorts (under `MIN_VIDEO_SECONDS`) are skipped.
-- Each email has **"✓ I've already watched this"**. One click and the video is never suggested again.
-- Each email reminds you to **write notes in Notion** and links your Notion page if you set one.
-- A dashboard shows today's videos, progress per channel, recently watched videos (with undo), and settings.
-- Optional **Connect YouTube**: videos you mark as watched are also added to a private
-  "Watched ✓ (YT Reminder)" playlist on your YouTube account.
+- Sign in with just your email (passwordless link). Reminders go to that address.
+- Add one or more channels by pasting a link (`https://www.youtube.com/@hnasr`, `@hnasr`, `/channel/UC…`).
+- Every day it picks **one random video you haven't watched** from each channel:
+  - default **10:00** = today's video, **20:00** = reminder for the same video (a new one if you already watched it)
+  - send times (up to 6) and time zone are configurable per user
+  - never-suggested videos first; Shorts are skipped
+- Every email has **"✓ I've already watched this"**, so the video is never suggested again, plus a nudge to
+  **write notes in Notion** (links your Notion page if you set one).
+- Optional **Connect YouTube**: watched videos are added to a private "Watched ✓ (YT Reminder)" playlist on your account.
 
-> **Why a playlist and not YouTube's own "watched" status?** YouTube's API doesn't let any app read or
-> change your watch history, so there is no way to mark a video as watched on YouTube itself.
-> For the same reason the app can't detect videos you watched directly on YouTube. Use the
-> "already watched" button (in the email or on the dashboard) for those.
+> YouTube's API does not allow any app to read or change watch history, so the app can't mark videos as watched
+> *on YouTube itself* or see what you watched there. The private playlist is the closest thing YouTube allows.
 
-## Running locally
+## Tech stack
 
-Requires Node.js 22.13+ (it uses the built-in `node:sqlite`, so there is no native database dependency).
+| Part | Tech |
+|---|---|
+| Frontend (`web/`) | Next.js 16 (App Router), React 19, TypeScript, SCSS (Sass modules + shared tokens/mixins) |
+| Backend (`server/`) | Node.js + Express 5 JSON API, built-in per-minute scheduler |
+| Database | MongoDB Atlas (official `mongodb` driver) |
+| Email | Resend |
+| YouTube | YouTube Data API v3 (API key), Google OAuth for the optional playlist |
 
-```bash
-npm install
-cp .env.example .env     # then fill in the values below
-npm start                # http://localhost:3000
-npm test
+The browser only talks to the Next.js app. Next.js proxies `/api/*` to the Express server (`web/next.config.ts`),
+so the session cookie is first-party and there's no CORS to set up.
+
+```
+web/      Next.js frontend           server/   Express API + scheduler
+  app/          pages                  src/server.js        API routes (/api/...)
+  components/   UI + *.module.scss     src/reminders.js     emails + scheduler
+  styles/       _variables, _mixins    src/picker.js        random unwatched video
+  lib/          api client, types      src/youtube.js       channel + video sync
+                                       src/db.js            MongoDB collections + indexes
 ```
 
-Without `RESEND_API_KEY`, emails (including sign-in links) are printed to the terminal, which is handy for development.
+## Setup
 
-### Configuration (`.env`)
+### 1. MongoDB Atlas (free)
+1. Create a free **M0** cluster at [cloud.mongodb.com](https://cloud.mongodb.com).
+2. **Database Access**: add a database user. **Network Access**: allow your server's IP (or `0.0.0.0/0`).
+3. **Connect → Drivers**: copy the connection string into `MONGODB_URI`.
+Indexes are created automatically on startup.
 
-| Variable | Required | Notes |
-|---|---|---|
-| `APP_URL` | yes | Public URL, used in email links. |
-| `APP_SECRET` | yes | Long random string. Signs email links and sessions. |
-| `RESEND_API_KEY` | yes (prod) | From [resend.com](https://resend.com). |
-| `EMAIL_FROM` | yes (prod) | Address on a domain you **verified in Resend**. The default `onboarding@resend.dev` only delivers to your own Resend account address. |
-| `YOUTUBE_API_KEY` | recommended | Google Cloud → enable *YouTube Data API v3* → create an API key. Without it, only a channel's latest 15 videos are available (via RSS). With it, the full back catalogue is imported. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional | OAuth client (Web application) for "Connect YouTube". Redirect URI: `<APP_URL>/auth/google/callback`. Scope used: `youtube`. Until your Google app is verified, add users as *test users* on the OAuth consent screen. |
-| `DEFAULT_TIMEZONE` | no | Default `Asia/Kolkata`. Each user can change theirs. |
-| `DEFAULT_SEND_TIMES` | no | Default `10:00,20:00`. |
-| `MIN_VIDEO_SECONDS` | no | Default `180`. Shorter videos (Shorts) are never picked. |
-| `CRON_SECRET` / `DISABLE_SCHEDULER` | no | See *Scheduling* below. |
-| `DATABASE_PATH` | no | SQLite file, default `./data/app.db`. |
+### 2. Keys
+- **Resend**: API key, and verify a domain to send from (`onboarding@resend.dev` only delivers to your own Resend account email).
+- **YouTube Data API v3 key** (Google Cloud console): strongly recommended. Without it only each channel's latest 15 videos are available.
+- *Optional* Google OAuth client (Web application) for "Connect YouTube".
+  Authorized redirect URI: `<WEB_URL>/api/auth/google/callback`.
 
-## Scheduling
+### 3. Run locally
+```bash
+npm run install:all
+cp server/.env.example server/.env   # fill in MONGODB_URI, APP_SECRET, RESEND_API_KEY, YOUTUBE_API_KEY…
+cp web/.env.example web/.env.local   # BACKEND_URL=http://localhost:4000
+npm run dev:server                   # API on :4000
+npm run dev:web                      # site on http://localhost:3000
+```
+Without `RESEND_API_KEY`, emails (including sign-in links) are printed in the server terminal.
 
-The server checks every minute which users have an email due in **their own time zone** and sends it.
-Each send is recorded, so a user never gets the same slot twice, even with several instances running against the
-same database. If the server was down at send time, the email still goes out if it comes back within 90 minutes.
-New uploads are picked up automatically (channels are re-synced every 12 hours).
-
-On hosts that put the app to sleep (or serverless), set `DISABLE_SCHEDULER=1` and `CRON_SECRET`, then have
-an external cron hit `POST /cron` with `Authorization: Bearer <CRON_SECRET>` every few minutes.
+### 4. Tests
+```bash
+npm test
+```
+Database tests start a temporary in-memory MongoDB automatically (it downloads `mongod` on first run),
+or use `MONGODB_TEST_URI=mongodb://...` to point them at a test database. Never point it at production;
+the test database is dropped afterwards.
 
 ## Deploying
 
-Any host that runs a long-lived Node process with a persistent disk works (Railway, Render, Fly.io, a VPS):
+- **Backend (`server/`)**: any host that runs a long-lived Node process: Render, Railway, Fly.io, or a VPS
+  (a `Dockerfile` is included). Set the variables from `server/.env.example`, with `WEB_URL` = your frontend URL.
+  If the host sleeps when idle (e.g. Render free tier), set `DISABLE_SCHEDULER=1` and `CRON_SECRET`, and have a
+  free cron service (cron-job.org, GitHub Actions) call `POST <backend>/api/cron` with
+  `Authorization: Bearer <CRON_SECRET>` every 5 minutes.
+- **Frontend (`web/`)**: Vercel (or any Next.js host). Set `BACKEND_URL` to the backend's URL **before building**
+  (it's baked into the `/api` proxy at build time).
 
-```bash
-docker build -t yt-reminder .
-docker run -p 3000:3000 -v yt-data:/data --env-file .env yt-reminder
-```
-
-Make sure `/data` (the SQLite file) is on a persistent volume.
-
-## Project layout
-
-```
-src/
-  index.js          start server + scheduler
-  server.js         routes (auth, dashboard, email links, Google OAuth, /cron)
-  reminders.js      builds/sends daily emails, per-minute scheduler
-  picker.js         random unwatched-video selection, mark watched
-  youtube.js        channel link parsing, channel/video sync (Data API or RSS)
-  google.js         optional YouTube OAuth + "Watched" playlist
-  emailTemplates.js email HTML/text
-  auth.js           passwordless email login + sessions
-  db.js / time.js / tokens.js / html.js / views.js / email.js
-test/               node:test suite
-```
+Emails are sent in each user's own time zone; each slot is recorded in MongoDB so nobody gets the same email twice,
+even with several server instances. If the server was down at send time, the email still goes out if it comes back
+within 90 minutes. New uploads are picked up every 12 hours.

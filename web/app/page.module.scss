@@ -1,0 +1,68 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.hero {
+  padding: $space-6 0 $space-5;
+
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    letter-spacing: -0.02em;
+    max-width: 18ch;
+  }
+
+  p {
+    color: var(--muted);
+    font-size: 17px;
+    max-width: 60ch;
+    margin: $space-4 0 0;
+  }
+}
+
+.accent { color: var(--accent); }
+
+.login {
+  @include card;
+  max-width: 560px;
+
+  h2 { font-size: 18px; margin-bottom: $space-3; }
+}
+
+.form {
+  display: flex;
+  gap: $space-2;
+
+  @include down($bp-sm) { flex-direction: column; }
+}
+
+.sent {
+  font-size: 16px;
+  strong { word-break: break-all; }
+}
+
+.steps {
+  display: grid;
+  gap: $space-4;
+  margin-top: $space-6;
+  grid-template-columns: 1fr;
+
+  @include up($bp-md) { grid-template-columns: repeat(3, 1fr); }
+}
+
+.step {
+  @include card;
+
+  .num {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: $space-3;
+  }
+
+  h3 { font-size: 16px; margin-bottom: $space-1; }
+  p { margin: 0; color: var(--muted); font-size: 14px; }
+}

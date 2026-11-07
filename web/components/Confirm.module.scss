@@ -1,0 +1,30 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.box {
+  @include card;
+  max-width: 560px;
+  margin: $space-6 auto 0;
+  text-align: center;
+
+  h1 { font-size: 22px; margin-bottom: $space-3; }
+  p { color: var(--muted); margin: 0 0 $space-5; }
+}
+
+.video {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: $space-3;
+  margin-bottom: $space-5;
+
+  img { border-radius: $radius; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; object-fit: cover; }
+  strong { font-size: 16px; }
+}
+
+.actions {
+  display: flex;
+  gap: $space-2;
+  justify-content: center;
+  flex-wrap: wrap;
+}
