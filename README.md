@@ -22,6 +22,7 @@ Get a daily email with one YouTube video you haven't watched yet, from the chann
 |---|---|
 | Frontend (`web/`) | Next.js 16 (App Router), React 19, TypeScript, SCSS (Sass modules + shared tokens/mixins) |
 | Backend (`server/`) | Node.js + Express 5 JSON API, built-in per-minute scheduler |
+| Hosting | Docker Compose + Caddy (automatic HTTPS) on a DigitalOcean droplet |
 | Database | MongoDB Atlas (official `mongodb` driver) |
 | Email | Resend |
 | YouTube | YouTube Data API v3 (API key), Google OAuth for the optional playlist |
@@ -70,16 +71,85 @@ Database tests start a temporary in-memory MongoDB automatically (it downloads `
 or use `MONGODB_TEST_URI=mongodb://...` to point them at a test database. Never point it at production;
 the test database is dropped afterwards.
 
-## Deploying
+## Deploying on a DigitalOcean droplet
 
-- **Backend (`server/`)**: any host that runs a long-lived Node process: Render, Railway, Fly.io, or a VPS
-  (a `Dockerfile` is included). Set the variables from `server/.env.example`, with `WEB_URL` = your frontend URL.
-  If the host sleeps when idle (e.g. Render free tier), set `DISABLE_SCHEDULER=1` and `CRON_SECRET`, and have a
-  free cron service (cron-job.org, GitHub Actions) call `POST <backend>/api/cron` with
-  `Authorization: Bearer <CRON_SECRET>` every 5 minutes.
-- **Frontend (`web/`)**: Vercel (or any Next.js host). Set `BACKEND_URL` to the backend's URL **before building**
-  (it's baked into the `/api` proxy at build time).
+`docker-compose.yml` runs everything on one droplet:
 
-Emails are sent in each user's own time zone; each slot is recorded in MongoDB so nobody gets the same email twice,
-even with several server instances. If the server was down at send time, the email still goes out if it comes back
-within 90 minutes. New uploads are picked up every 12 hours.
+| Container | What it does |
+|---|---|
+| `caddy` | Public entry on ports 80/443, gets and renews HTTPS certificates automatically. Sends `/api/*` to `server`, everything else to `web`. |
+| `web` | Next.js frontend |
+| `server` | Express API + the scheduler that sends the emails |
+
+Data lives in **MongoDB Atlas**, so there's nothing to back up on the droplet.
+
+### 1. One-time setup
+
+1. **Droplet**: Ubuntu 24.04. 1 GB RAM works, but add swap so the Next.js build doesn't run out of memory:
+   ```bash
+   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+   echo '/swapfile none swap sw 0 0' >> /etc/fstab
+   ```
+2. **Docker**:
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   ```
+3. **Domain**: add a DNS **A record** (e.g. `reminder.yourdomain.com`) pointing at the droplet's IP.
+4. **Firewall**: allow SSH, 80 and 443 only.
+   ```bash
+   ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
+   ```
+5. **MongoDB Atlas → Network Access**: add the droplet's IP address.
+6. **Google Cloud** (only if you use "Connect YouTube"): authorized redirect URI
+   `https://reminder.yourdomain.com/api/auth/google/callback`.
+
+### 2. Configure and start
+
+```bash
+git clone https://github.com/suryathink/yt-channel-reminder.git
+cd yt-channel-reminder
+
+cp .env.example .env                 # DOMAIN=reminder.yourdomain.com
+cp server/.env.example server/.env   # see below
+nano server/.env
+
+docker compose up -d --build
+```
+
+In `server/.env` set at least:
+
+```
+WEB_URL=https://reminder.yourdomain.com
+APP_SECRET=<long random string>
+MONGODB_URI=mongodb+srv://...
+RESEND_API_KEY=re_...
+EMAIL_FROM=YT Reminder <reminders@yourdomain.com>
+YOUTUBE_API_KEY=...
+```
+
+Leave `DISABLE_SCHEDULER=0`: the server is always on, so the built-in scheduler sends the emails, with no cron needed.
+
+Open `https://reminder.yourdomain.com`, sign in, and add a channel. To check right away, use
+**"Send me today's email now"** on the dashboard.
+
+### 3. Day to day
+
+```bash
+docker compose logs -f server          # emails sent, sync errors, etc.
+docker compose ps                      # status
+git pull && docker compose up -d --build   # deploy an update
+```
+
+No domain yet? Leave `DOMAIN` empty in `.env` and the site is served over plain HTTP on the droplet's IP.
+Set `WEB_URL=http://<droplet-ip>` to match. Use a domain with HTTPS for real use.
+
+### Other hosts
+
+The same images run anywhere Docker runs. On hosts that sleep when idle, set `DISABLE_SCHEDULER=1` and `CRON_SECRET`
+and call `POST /api/cron` with `Authorization: Bearer <CRON_SECRET>` every 5 minutes.
+
+### How sending works
+
+Emails go out in each user's own time zone. Each slot is recorded in MongoDB, so nobody gets the same email twice,
+even if the server restarts. If the server was down at send time, the email still goes out if it comes back within
+90 minutes. New uploads are picked up every 12 hours.
